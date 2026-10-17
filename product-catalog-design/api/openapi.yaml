@@ -1,0 +1,370 @@
+openapi: 3.0.3
+info:
+  title: Product Catalog API
+  version: 1.0.0
+  description: |
+    Public REST API of the Product Catalog (T5).
+    Reads are public and CDN-cacheable. Writes require a JWT with role `admin` or `seller`.
+    See docs/03-api.md for conventions (pagination, caching, idempotency, concurrency control).
+servers:
+  - url: https://api.shop.example/api/v1
+tags:
+  - name: Products
+  - name: Categories
+  - name: Search
+paths:
+  /products/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ProductId'
+    get:
+      tags: [Products]
+      summary: Get a product card
+      responses:
+        '200':
+          description: Product card
+          headers:
+            ETag:
+              description: Product version, e.g. "6". Use it in If-Match for updates.
+              schema: { type: string }
+            Cache-Control:
+              schema: { type: string }
+              example: public, max-age=60, s-maxage=600, stale-while-revalidate=30
+            Surrogate-Key:
+              schema: { type: string }
+              example: product-42 category-3
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+    put:
+      tags: [Products]
+      summary: Replace a product (optimistic locking)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: If-Match
+          in: header
+          required: true
+          description: Version the client last read, e.g. "5".
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductInput' }
+      responses:
+        '200':
+          description: Updated product (version incremented)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '412':
+          description: If-Match version is stale; re-read the product and retry
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '428':
+          description: If-Match header is missing
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+    delete:
+      tags: [Products]
+      summary: Delete a product
+      security: [{ bearerAuth: [] }]
+      responses:
+        '204': { description: Deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /products:
+    post:
+      tags: [Products]
+      summary: Create a product (idempotent with Idempotency-Key)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: UUID generated once per logical operation and reused on retries.
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductInput' }
+      responses:
+        '201':
+          description: Created (also returned, with the original body, when a request is replayed)
+          headers:
+            Location:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: A request with this Idempotency-Key is still in progress
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422':
+          description: Idempotency-Key was already used with a different request body
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /categories/{id}/products:
+    get:
+      tags: [Categories]
+      summary: List products directly in a category (cursor pagination, sorted by price)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: One page of products
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductPage' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /search:
+    get:
+      tags: [Search]
+      summary: Full-text search with filters
+      parameters:
+        - name: q
+          in: query
+          schema: { type: string }
+        - name: brand
+          in: query
+          schema: { type: string }
+        - name: category_id
+          in: query
+          description: Matches the category and all of its descendants.
+          schema: { type: integer }
+        - name: price_min
+          in: query
+          schema: { type: number }
+        - name: price_max
+          in: query
+          schema: { type: number }
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [relevance, price_asc, price_desc]
+            default: relevance
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: One page of results
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductPage' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Search is unavailable (Elasticsearch down); honour Retry-After
+          headers:
+            Retry-After:
+              schema: { type: integer }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /products/{id}/images:
+    post:
+      tags: [Products]
+      summary: Request a presigned S3 upload URL for a product image
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProductId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content_type]
+              properties:
+                content_type:
+                  type: string
+                  enum: [image/jpeg, image/png, image/webp]
+      responses:
+        '200':
+          description: Upload the file with PUT to upload_url, then confirm with the returned image_url
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImageUpload' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /products/{id}/images/confirm:
+    post:
+      tags: [Products]
+      summary: Confirm an uploaded image; its CDN URL is appended to image_urls
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProductId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [image_url]
+              properties:
+                image_url: { type: string, format: uri }
+      responses:
+        '200':
+          description: Updated product (version incremented)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        '400':
+          description: The object was not found in storage
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    ProductId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque cursor from the previous page's next_cursor.
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Missing or invalid token
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Role is not allowed to perform this action
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    TooManyRequests:
+      description: Rate limit exceeded; honour Retry-After
+      headers:
+        Retry-After:
+          schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unavailable:
+      description: Service overloaded or dependency down; honour Retry-After
+      headers:
+        Retry-After:
+          schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    Product:
+      type: object
+      required: [id, title, price, currency, category_id, stock, version, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string, maxLength: 200 }
+        description: { type: string }
+        price: { type: string, example: '450000.00', description: Decimal as string (no float rounding). }
+        currency: { type: string, minLength: 3, maxLength: 3, example: KZT }
+        brand_id: { type: integer }
+        category_id: { type: integer }
+        attributes:
+          type: object
+          additionalProperties: true
+          example: { ram: 6GB, storage: 128GB, color: black }
+        image_urls:
+          type: array
+          items: { type: string, format: uri }
+        stock: { type: integer, minimum: 0 }
+        version: { type: integer, minimum: 1 }
+        updated_at: { type: string, format: date-time }
+    ProductInput:
+      type: object
+      required: [title, price, currency, category_id]
+      properties:
+        title: { type: string, maxLength: 200 }
+        description: { type: string }
+        price: { type: string, example: '450000.00' }
+        currency: { type: string, minLength: 3, maxLength: 3 }
+        brand_id: { type: integer }
+        category_id: { type: integer }
+        attributes: { type: object, additionalProperties: true }
+        image_urls:
+          type: array
+          items: { type: string, format: uri }
+        stock: { type: integer, minimum: 0 }
+    ProductPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Product' }
+        next_cursor:
+          type: string
+          nullable: true
+          description: Null on the last page.
+    ImageUpload:
+      type: object
+      required: [upload_url, image_url, expires_in]
+      properties:
+        upload_url: { type: string, format: uri, description: Presigned S3 URL (PUT). }
+        image_url: { type: string, format: uri, description: Final CDN URL stored in image_urls. }
+        expires_in: { type: integer, example: 300 }
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string, example: version_conflict }
+            message: { type: string }
+            request_id: { type: string }
