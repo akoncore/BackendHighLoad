@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: com.akon.catalog.ReliabilityTest
+-------------------------------------------------------------------------------
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.153 s -- in com.akon.catalog.ReliabilityTest

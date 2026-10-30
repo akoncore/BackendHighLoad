@@ -1,0 +1,50 @@
+syntax = "proto3";
+package catalog;
+option java_package = "com.akon.catalog.proto";
+option java_multiple_files = true;
+
+// Один и тот же товар доступен через REST и gRPC.
+service ProductService {
+  rpc GetProduct(GetProductRequest) returns (ProductResponse);
+  rpc ListProducts(ListProductsRequest) returns (ListProductsResponse);
+  rpc CreateProduct(CreateProductRequest) returns (ProductResponse);
+  rpc UpdateProduct(UpdateProductRequest) returns (ProductResponse);
+  rpc DeleteProduct(DeleteProductRequest) returns (DeleteProductResponse);
+}
+message ProductInput {
+  string title = 1;
+  string price = 2; // Деньги передаём строкой, а в Java используем BigDecimal.
+  int32 stock = 3;
+  string currency = 4;
+  int64 category_id = 5;
+}
+message ProductResponse {
+  string id = 1;
+  string title = 2;
+  string price = 3;
+  int32 stock = 4;
+  int64 version = 5;
+  string currency = 6;
+  int64 category_id = 7;
+  string updated_at = 8;
+}
+message GetProductRequest { string id = 1; }
+message ListProductsRequest {
+  optional int32 limit = 1; // Если не задан: 20. Допустимо 1–100.
+  string cursor = 2;
+}
+message ListProductsResponse {
+  repeated ProductResponse items = 1;
+  string next_cursor = 2; // Пустая строка означает конец списка.
+}
+message CreateProductRequest {
+  string idempotency_key = 1;
+  ProductInput product = 2;
+}
+message UpdateProductRequest {
+  string id = 1;
+  int64 version = 2;
+  ProductInput product = 3;
+}
+message DeleteProductRequest { string id = 1; }
+message DeleteProductResponse {}

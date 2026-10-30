@@ -1,0 +1,23 @@
+server:
+  address: 127.0.0.1
+  port: 8080
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/catalog}
+    username: ${DB_USER:catalog}
+    password: ${DB_PASSWORD:catalog}
+    hikari:
+      maximum-pool-size: 10
+      connection-timeout: 2000
+  sql:
+    init:
+      mode: always
+  jdbc:
+    template:
+      query-timeout: 3
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+    deserialization:
+      fail-on-unknown-properties: true
+grpc:
+  port: 9090
